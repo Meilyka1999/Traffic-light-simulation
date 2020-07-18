@@ -1,0 +1,114 @@
+/*
+  Task 4: Red-Light Camera
+  To photograph and count cars breaching red light 
+  (tactile pushbutton simulates car through traffic light) 
+  and display the count as PWM on oscilloscope.
+*/
+
+
+volatile int count = 2;
+const int halfSecond = 7812;// compare value
+volatile int bluepulseCount = 0;
+volatile uint8_t redOn = 0;
+volatile int naughtyCars = 0;
+volatile int pwmValue = 0;
+
+
+void setup(){
+  // I/O setup
+  DDRB |= (1 << DDB2); //pin PB2 red
+  DDRB |= (1 << DDB1); //pin PB1 yellow
+  DDRB |= (1 << DDB0); //pin PB0 green
+  DDRB |= (1 << DDB5); //oscilliscope pin 13 (PB5) - output
+  DDRC |= (1 << DDC4); //blue light pin A3 (PC4) -output
+  DDRD &= ~(1 << DDD2); //push button pin 2(PD2) - input
+  
+  //Enable and Initialize Interrupt for LB1 an LB2
+  EIMSK |= (1<<INT0); // enable external int. on PORTD2 (LB1)
+  EICRA |= (1<<ISC01) | (1<<ISC00); // sense a rising edge
+  
+  cli(); //disable interrupts
+  
+  //Normal mode timer/counter1 setup
+  TCCR1B = 0;
+  TCCR1A = 0;
+  TCNT1 = 0;
+  
+  TCCR1B |= (1 << WGM12 ); //set to CTC Mode
+  OCR1A = 15624;// compare value 1 second
+  TCCR1B |= (1<<CS12)| (1<<CS10); // prescale = 1024
+  TIMSK1 |= (1<<OCIE1A); // enable compare A 
+  sei(); //	enable interrupts
+  
+  PORTB = (1 << PORTB2); //red light on
+  redOn = 1;
+}
+
+void loop(){
+  /*PWM display of count*/
+  
+  if (TCNT1 < pwmValue){ 
+    PORTB |= (1<< PORTB5); //duty cycle - high voltage 5V
+  }
+  if (TCNT1 > pwmValue){
+    PORTB &= ~(1<<PORTB5); // low voltage 0V
+  }
+}
+
+ISR(TIMER1_COMPA_vect){
+  TCNT1 = 0x0000;
+  if (count == 1) {  
+    PORTB |= (1 << PORTB2); //red LED on
+    PORTB &= ~(1 << PORTB1); //yellow LED off
+    PORTB &= ~(1 << PORTB0); //green LED off
+    redOn = 1;
+    count = 2;
+  }
+  else if (count == 2) {
+    PORTB &= ~(1 << PORTB2); //red LED off
+    PORTB &= ~(1 << PORTB1); //yellow LED off
+    PORTB |= (1 << PORTB0); //green LED on
+    redOn = 0;
+    count = 0;
+  }
+  else{
+    PORTB &= ~(1 << PORTB2); //red LED off
+    PORTB |= (1 << PORTB1); //yellow LED on
+    PORTB &= ~(1 << PORTB0); //green LED off
+    redOn = 0;
+    count = 1;   
+  }
+}
+
+ISR(INT0_vect) {//red traffic camera interrupt routine
+  if (redOn){
+    naughtyCars++;
+    PORTC |= (1 << PORTC4); //turn blue on
+    if (TCNT1 < 7812){
+  		OCR1B = TCNT1 + halfSecond;
+    }
+    else {
+      OCR1B = TCNT1 - halfSecond;
+    }
+  	TIMSK1 |= (1<<OCIE1B); // enable compare B 
+    pwmValue = round((naughtyCars/100.0)*15624); //duty cycle
+  }
+}
+
+ISR(TIMER1_COMPB_vect){
+  bluepulseCount++;
+
+  if (TCNT1 < 7812){
+  	OCR1B = TCNT1 + halfSecond;
+  }
+  else {
+    OCR1B = TCNT1 - halfSecond;
+  }
+  PORTC ^= (1 << PORTC4); //toggle blue light
+  
+  if(bluepulseCount == 3){
+    bluepulseCount = 0; 
+    PORTC &= ~(1 << PORTC4); //turn blue off
+    TIMSK1 &= ~(1 << OCIE1B); //disable compare B
+  } 
+}

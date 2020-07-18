@@ -1,0 +1,56 @@
+/*
+  Task 1: Basic Traffic Light (Normal Mode)
+  Cycle to each light for 1 second (green -> yellow ->red)
+*/
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+
+volatile int count = 2;
+
+void setup(){
+  // I/O setup
+  DDRB |= (1 << DDB2); //pin PB2 red
+  DDRB |= (1 << DDB1); //pin PB1 yellow
+  DDRB |= (1 << DDB0); //pin PB0 green
+  
+  cli(); //disable interrupt
+  
+ //Normal mode timer/counter1 setup
+  TCCR1B = 0x0;
+  TCCR1A = 0x0;
+  TCNT1 = 0x0000;
+  OCR1A = 15624; // compare value
+  TCCR1B |= (1<<CS10) | (1<<CS12); // prescale = 1024
+  TIMSK1 |= (1<<OCIE1A); // enable compare A
+  sei(); //enable interrupt
+  
+  //initialise lights
+  PORTB |= (1 << PORTB2); //red light on 
+}
+
+void loop(){
+  //interrupt driven programme
+}
+
+ISR(TIMER1_COMPA_vect){
+  TCNT1 = 0x0000;
+  if (count == 1) {  
+    PORTB |= (1 << PORTB2); //red LED on
+    PORTB &= ~(1 << PORTB1); //yellow LED off
+    PORTB &= ~(1 << PORTB0); //green LED off
+    count = 2;
+  }
+  else if (count == 2) {
+    PORTB &= ~(1 << PORTB2); //red LED off
+    PORTB &= ~(1 << PORTB1); //yellow LED off
+    PORTB |= (1 << PORTB0); //green LED on
+    count = 0;
+  }
+  else{
+    PORTB &= ~(1 << PORTB2); //red LED off
+    PORTB |= (1 << PORTB1); //yellow LED on
+    PORTB &= ~(1 << PORTB0); //green LED off
+    count = 1;   
+  }
+}

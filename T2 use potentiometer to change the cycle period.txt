@@ -1,0 +1,174 @@
+/*
+  Task 2: Configurable Traffic Light (CTC/Normal Mode)
+  Traffic light cycle for 1 time period each.
+  When button is pressed, time period can be configured using
+  potentiometer and PWM signal on blue light indicates the time
+  period in this mode.
+*/
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <math.h>
+
+//initialise & declare variables
+volatile uint8_t pressed = 0;
+volatile uint8_t cyclePeriod = 1;
+volatile uint8_t cyclePeriodTracker = 0;
+volatile uint16_t resultConversion;
+volatile int countFlash = 0;
+volatile uint8_t state = 0;
+volatile uint8_t flash = 0;
+const uint16_t compareVal_1sec = 15624;
+
+void setup()
+{
+  // I/O setup
+  DDRB |= (1 << DDB2); //pin PB2 red
+  DDRB |= (1 << DDB1); //pin PB1 yellow
+  DDRB |= (1 << DDB0); //pin PB0 green
+  DDRD &= ~(1 << DDD2); //pin PD2 - input
+  DDRC &= ~(1 << DDC0); //pin PC0 - input
+  DDRC |= (1 << DDC1); //pin PC1 - output
+
+  cli();// disable interrupt
+  
+  //timer/counter1 setup
+  TCCR1B = 0x0;
+  TCCR1A = 0x0;
+  TCNT1 = 0x0;
+  TCCR1B = (1 <<WGM12); //waveform generation for CTC mode
+  OCR1A = compareVal_1sec*cyclePeriod; //top value
+  TCCR1B |=  (1<<CS10)|(1<<CS12); // prescale = 1024
+  TIMSK1 |= (1<<OCIE1A); // enable compare A
+
+  // tactile button interrupt setup
+  EIMSK |= (1<<INT0); // enable external int. on PORTD2
+  EICRA |= (1<<ISC01) | (1<<ISC00); // sense a rising edge 
+
+  // ADC setup
+  ADMUX = 0x0; // pin ADC0
+  ADMUX |= (0<<REFS1)|(1<<REFS0); // V_REF = AV_cc
+  ADCSRA = 0x0;
+  ADCSRA |= (1<<ADEN)|(1<<ADIE); //enable ADC and its conversion complete interrupt
+  sei(); // enable interrupt processing
+}
+
+void loop()
+{
+  ADCSRA |= (1<<ADSC); //start ADC conversion poll pot
+  if (state == 0){ //turn red light on
+    PORTB |= (1 << PORTB2); 
+    PORTB &= ~(1 << PORTB1); 
+    PORTB &= ~(1 << PORTB0); 
+  }
+  if (state == 1){ //turn green light on
+    PORTB &= ~(1 << PORTB2); 
+    PORTB &= ~(1 << PORTB1);
+    PORTB |= (1 << PORTB0); 
+  }
+  if (state == 2){ //turn yellow light on
+    PORTB &= ~(1 << PORTB2); 
+    PORTB |= (1 << PORTB1); 
+    PORTB &= ~(1 << PORTB0); 
+  }
+  if (state == 3){ //turn red light on & blue blinking 
+    PORTB |= (1 << PORTB2); 
+    PORTB &= ~(1 << PORTB1); 
+    PORTB &= ~(1 << PORTB0); 
+    
+    if ((countFlash & 1) == 1){
+      PORTC |= 1 << PORTC1; //blue light on
+    }
+    if ((countFlash & 1) == 0){
+      PORTC &= ~(1 << PORTC1); //blue light off
+    }     
+     
+  }
+  if (state == 4){ //blue light off for 2secs
+    PORTC &= ~(1 << PORTC1); 
+  }      
+}
+
+ISR(INT0_vect) {
+  pressed == 0 ? pressed = 1 : pressed = 0;
+ 
+  /*if button pressed on when red -
+  immediately start confg mode*/
+  if (pressed == 1 && state == 0){ 
+    state = 3; //red on and blue flashing
+    countFlash ++;
+    cyclePeriod = cyclePeriodTracker;
+    OCR1A = compareVal_1sec/(2*cyclePeriod);
+  }
+    /*if button pressed off when blue is off for 2 secs - 
+    immediately back to normal mode*/
+  if (pressed == 0 && state == 4){
+    TCNT1 = 0x0000;
+    state = 1; //green light on
+    OCR1A = compareVal_1sec*cyclePeriod; 
+  }
+}
+
+ISR(ADC_vect) {
+  	resultConversion = ADC;
+   //determine the traffic light states/cycle period
+    if (resultConversion < 256){ 
+    	cyclePeriodTracker = 1;
+  	}
+  	else if (resultConversion >= 265 &  resultConversion < 512){
+  		cyclePeriodTracker = 2;
+  	}
+  	else if (resultConversion >= 512 & resultConversion < 768){
+    	cyclePeriodTracker = 3;
+  	}
+  	else{
+    	cyclePeriodTracker = 4;
+  	}
+  	return;
+}
+
+ISR(TIMER1_COMPA_vect){
+  TCNT1 = 0x0000; //reset timer
+
+/*   if in configuration (button pressed) and red on or 
+  blue was just off for 2 seconds start flashing blue */
+  if (pressed == 1 &(state == 2 | state == 4|(state == 3 & countFlash < (2*cyclePeriod)))){ 
+    state = 3; //red on and blue flashing
+    countFlash ++;
+    cyclePeriod = cyclePeriodTracker;
+    OCR1A = compareVal_1sec/(2*cyclePeriod);
+    return;
+  }
+  
+  /*if button not pressed and red or previously 
+  in configuration mode go to green*/
+  if (pressed == 0 & (state == 0 | state == 3 | state == 4)){
+   state = 1; //green light on 
+   OCR1A = compareVal_1sec*cyclePeriod;
+   return;
+  }
+  
+  // if green go to yellow
+  if (state == 1){
+    state = 2; //yellow on
+    OCR1A = compareVal_1sec*cyclePeriod;
+    return;
+  }
+  
+  //if orange go to red
+  if (state == 2 ){
+    state = 0; //red on
+    OCR1A = compareVal_1sec*cyclePeriod;
+    return;
+  }
+  
+  //if flashed total number of times turn blue off for 2 seconds
+  if (pressed == 1 & state == 3 & countFlash >= (2*cyclePeriod-1)){
+    cyclePeriod = cyclePeriodTracker;
+    state = 4; //blue off for 2 secs
+    countFlash = 0;
+    OCR1A = compareVal_1sec * 2;
+    return;
+  }
+}
+  

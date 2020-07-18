@@ -1,0 +1,106 @@
+/*This programme determines the time that elapses between two
+push buttons being pressed, uses this to calculate the speed
+of a car passing between them and displays the speed of the car
+with a PWM signal on the oscilliscope that is proportional to
+the speed (in km/hr)ie 10 km/h -> 10% duty cycle*/
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <math.h>
+
+
+//Initialize Variables
+volatile unsigned int counterValue = 0;
+volatile unsigned int numOverflows = 0;
+volatile unsigned int counterValueOn = 0;
+volatile unsigned int counterValueOff = 0;
+volatile uint8_t displayMode = 0;
+volatile uint8_t pwmToggle = 0;
+volatile uint8_t interrupt2Flag = 0;
+volatile float dutyCycle;
+
+void setup(){
+  //Set Data Direction for I/O pins
+  DDRD &= ~(1 << DDD2);//PUSHBUTTON LB1 pin 2(PD2) - input
+  DDRD &= ~(1 << DDD3); //PUSHBUTTON LB2 pin 3(PD3) - input
+  DDRC = (1 << DDC3); //LED on pin A3(PC3) - output
+  DDRC = (1 << DDC4); //LED on pin A4(PC4) - output 
+  DDRB = (1 << DDB1); //OSCILLISCOPE on pin 9(PB1) -output
+  
+  //Initialize Timer/Counter1
+  TIMSK1 = 0x0;
+  TCCR1B = 0x0;
+  TCCR1A = 0x0; //Set Timer/Counter1 to Normal Mode
+  TIMSK1 |= (1 << TOIE1);//enable overflow interrupt
+  TCCR1B |= (1 << CS12) | ( 1 << CS10);//Start timer and set prescalar to 1024 - timer/counter frequency = 15625Hz
+
+  //Enable and Initialize Interrupt for LB1 an LB2
+  EIMSK = 0x0;
+  EICRA = 0x0;
+  EIMSK |= (1<<INT0); // enable external int. on PORTD2 (LB1)
+  EICRA |= (1<<ISC01) | (1<<ISC00); // sense a rising edge
+  EIMSK |= (1<<INT1); // enable external int. on PORTD3 (LB2)
+  EICRA |= (1<<ISC10) | (1<<ISC11); // sense a rising edge
+  
+  sei(); //gloablly enable interrupts  
+}
+
+
+void loop() {
+ //Interrupt Driven Program
+ delay(10); //faster simulation runtime
+}
+
+ISR(INT0_vect) //LB1 interrupt routine
+{
+  TCNT1 = 0x0000; //Reset Clock  
+  pwmToggle = 0; //reset
+  displayMode = 0; //turn off PWM display
+  numOverflows = 0;
+  TIMSK1 |= (1 << TOIE1);//enable overflow interrupt 
+  PORTB &= ~(1 << PORTB1); //LOW signal to oscilliscope
+ 
+}
+  
+ISR(INT1_vect) //LB2 interrupt routine
+ {
+  interrupt2Flag = 0; //reset interrupt flag
+  counterValue = TCNT1; //Stop and record clock time'
+  TIMSK1 &= ~(1 << TOIE1);//disable overflow interrupt
+  dutyCycle = 11250.0/(counterValue + (numOverflows*65536));
+  if (dutyCycle < 1){
+    displayMode = 1; //turn on display mode
+    counterValueOff = 49910 + ((dutyCycle)*15625);
+    counterValueOn = 49910 + (65535-counterValueOff);
+    pwmToggle = 0; //start with PWM signal on but have set to be off next time overflow interrupt occurs
+  	PORTB |= (1 << PORTB1); 
+    TCNT1 = counterValueOn; //start PWM display
+    TIMSK1 |= (1 << TOIE1);//enable overflow interrupt 
+  }
+  else {
+    //Do not enable overflow interrupt
+    PORTB |= (1 << PORTB1); //100% Duty Cycle 
+    //Will stay HIGH until next car triggers LB1 interrupt      
+  }
+}
+
+ISR(TIMER1_OVF_vect) // overflowinterrupt service routine 
+{
+  if (displayMode) {    
+    if(pwmToggle){
+      PORTB |= (1 << PORTB1); //high voltage to oscilliscope
+      TCNT1 = counterValueOn; //start PWM display
+      pwmToggle = 0;
+    }
+    else {
+      PORTB &= ~(1 << PORTB1); //low voltage to oscilliscope
+      TCNT1 = counterValueOff;
+      pwmToggle = 1;
+    }
+  }
+  else {
+    numOverflows++;
+  }
+}
+
+
